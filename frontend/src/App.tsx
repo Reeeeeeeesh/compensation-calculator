@@ -43,6 +43,11 @@ function App() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // --- Batch Upload State ---
+  const [batchFile, setBatchFile] = useState<File | null>(null);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [batchLoading, setBatchLoading] = useState<boolean>(false);
+
   // --- Event Handlers ---
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -124,6 +129,54 @@ function App() {
     }
 
     setIsLoading(false);
+  };
+
+  // --- Batch Upload Handler ---
+  const handleBatchFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setBatchFile(e.target.files[0]);
+      setBatchError(null);
+    }
+  };
+
+  const handleBatchSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setBatchError(null);
+    setBatchLoading(true);
+
+    if (!batchFile) {
+      setBatchError('Please select a CSV or Excel file to upload.');
+      setBatchLoading(false);
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', batchFile);
+
+    try {
+      const response = await fetch('/api/batch_calculate_compensation', {
+        method: 'POST',
+        body: formData,
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Batch calculation failed.');
+      }
+      // Download the CSV file
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'compensation_results.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setBatchError(err.message);
+    } finally {
+      setBatchLoading(false);
+    }
   };
 
   // --- Helper to format currency ---
@@ -246,6 +299,34 @@ function App() {
           </div>
         </div>
       )}
+      {/* --- Batch Upload Section --- */}
+      <div className="mt-10 p-6 bg-white rounded-lg shadow border border-gray-200">
+        <h2 className="text-lg font-semibold mb-4 text-gray-800">Batch Compensation Calculator (CSV/Excel Upload)</h2>
+        <form onSubmit={handleBatchSubmit} className="space-y-4">
+          <input
+            type="file"
+            accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+            onChange={handleBatchFileChange}
+            className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+          />
+          <button
+            type="submit"
+            disabled={batchLoading}
+            className={`w-full inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white ${batchLoading ? 'bg-indigo-300' : 'bg-indigo-600 hover:bg-indigo-700'} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50`}
+          >
+            {batchLoading ? 'Processing...' : 'Upload & Download Results'}
+          </button>
+        </form>
+        {batchError && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mt-4" role="alert">
+            <strong className="font-bold">Error: </strong>
+            <span className="block sm:inline">{batchError}</span>
+          </div>
+        )}
+        <div className="text-xs text-gray-500 mt-3">
+          File must contain columns: <code>role_level</code>, <code>team_revenue</code>, <code>last_years_salary</code>, <code>performance_multiplier</code>. Results will be downloaded as a CSV.
+        </div>
+      </div>
     </div>
   );
 }

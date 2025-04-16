@@ -1,5 +1,7 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 from app.services import calculate_total_compensation # Import the calculation function
+import pandas as pd
+import io
 
 # Create a Blueprint
 # Using a blueprint helps organize routes, especially as the application grows.
@@ -62,3 +64,59 @@ def handle_calculate_compensation():
         **result # Unpack the calculation results dictionary
     }
     return jsonify(response_data), 200
+
+@main_routes.route('/api/batch_calculate_compensation', methods=['POST'])
+def batch_calculate_compensation():
+    """Batch API endpoint to process uploaded CSV or Excel files and return results as downloadable file."""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part in the request."}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file."}), 400
+
+    # Determine file type and read into DataFrame
+    try:
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(file)
+        elif file.filename.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(file)
+        else:
+            return jsonify({"error": "Unsupported file type. Please upload CSV or Excel files."}), 400
+    except Exception as e:
+        return jsonify({"error": f"Failed to read file: {e}"}), 400
+
+    # Required columns
+    required_fields = ["role_level", "team_revenue", "last_years_salary", "performance_multiplier"]
+    missing_fields = [col for col in required_fields if col not in df.columns]
+    if missing_fields:
+        return jsonify({"error": f"Missing required columns: {', '.join(missing_fields)}"}), 400
+
+    # Prepare results list
+    results = []
+    for idx, row in df.iterrows():
+        try:
+            result = calculate_total_compensation(
+                role_level=str(row["role_level"]),
+                team_revenue=float(row["team_revenue"]),
+                last_years_salary=float(row["last_years_salary"]),
+                performance_multiplier=float(row["performance_multiplier"])
+            )
+        except Exception as e:
+            result = {"error": str(e)}
+        # Combine input and output for each row
+        row_result = {**row.to_dict(), **result}
+        results.append(row_result)
+
+    # Create result DataFrame
+    result_df = pd.DataFrame(results)
+    # Output as CSV
+    output = io.StringIO()
+    result_df.to_csv(output, index=False)
+    output.seek(0)
+
+    return send_file(
+        io.BytesIO(output.getvalue().encode()),
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name='compensation_results.csv'
+    )
